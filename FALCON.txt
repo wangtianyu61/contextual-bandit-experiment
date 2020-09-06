@@ -1,0 +1,10 @@
+2020/07/08 xyz
+1. linear的话estimation error是d/n
+2. 常数需要你自己调一下（反正本来learning rate前面的常数应该就需要去调）
+3. estimation error带上delta的话应该high prob bound是d log(1/delta)/n
+4. 感觉实验时可能一般就直接把delta取成1/T之类
+5. 想了一下，estimation error应该本身不需要调，但是learning rate前面的参数应该还是要调
+
+先做一个无约束的基类吧。
+
+写完了应该orz

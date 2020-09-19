@@ -8,7 +8,10 @@ import math
 import random
 from sklearn.linear_model import LogisticRegression, LinearRegression
 
-VW_DS_DIR = '../datasets/OnlineAutoLoan/'
+VW_DS_DIR = '../../datasets/OnlineAutoLoan/'
+
+feature_column = ['intercept', 'CarType', 'Primary_FICO', 'Term', 'Competition_rate', 'onemonth']
+feature_column_interaction = [feature + '_interact' for feature in feature_column] 
 # encode the original data into vw format
 def save_vw_dataset(X, y, did, ds_dir, choice = True):
     # change a bit as we change the data structure of y
@@ -53,6 +56,7 @@ def map_class(X):
             else:
                 feature_label.append(feature_map[item])
         X[feature] = pd.Series(feature_label)
+    
     return X
 
 #shuffle the value of x and y to a stochastic order
@@ -97,20 +101,26 @@ def price_compute(MP, Rate, Term, LoanAmount):
     for i in range(len(Rate)):
         for j in range(1, Term[i] + 1):
             price[i] += MP[i]/((1 + LIBOR[i])**j)
-    print(price)
+    #print(price)
     return price
 
 def feature_normalize(feature_column, price):
     X = map_class(df[feature_column])
+
     for column in X.columns:
         X[column] = pd.Series(np.array(list(X[column]))/np.mean(X[column]))
-    print(X)
+
     Y = np.zeros(X.shape)
     for index in range(len(X)):
-        
         Y[index] = np.array(list(X.loc[index]))*price[index]
-    comb = pd.concat([X, pd.DataFrame(Y)], axis = 1)
-    return X, comb
+    
+    Y = Y.T
+    feature_norm = []
+    for i in range(Y.shape[0]):
+        feature_norm.append(np.mean(Y[i]))
+        Y[i] = Y[i]/np.mean(Y[i])
+    comb = pd.concat([X, pd.DataFrame(Y.T)], axis = 1)
+    return X, comb, feature_norm
     
 
 
@@ -118,11 +128,11 @@ def feature_normalize(feature_column, price):
 price_arm = 10
 price_range = 1000
 
-def simulation_data_generation(lr_model, X_original, price):
+def simulation_data_generation(lr_model, X_original, price, feature_norm, id_norm):
 
     noise_std = 0.004
     
-    csv_loan = open(VW_DS_DIR + str(price_arm) + '_' + str(price_range) + '.csv', 'w', newline = '')
+    csv_loan = open(VW_DS_DIR + 'test/ds_loan_' + str(price_arm) + '_' + str(price_range) + '.csv', 'w', newline = '')
     
     csv_writer = csv.writer(csv_loan)
     
@@ -136,9 +146,12 @@ def simulation_data_generation(lr_model, X_original, price):
     for t in range(X_original.shape[0]):
         for i in range(price_arm):
             Y = np.array(list(X_original.loc[t]))*arm_price[i]
+            #rint(Y, feature_norm)
+            Y = [Y[i]/feature_norm[i] for i in range(len(feature_norm))]
             X_temp = X_original.loc[t:t]
             X_temp.index = [0]
             comb = pd.concat([X_temp, pd.DataFrame(Y).T], axis = 1)
+            comb.loc[0] = comb.loc[0]/id_norm['max_norm']
             #print(comb)
             prob = 1/(1 + math.exp(np.dot(-1*lr_model.coef_[0], np.array(list(comb.loc[0]))))) + np.random.normal(0, noise_std)
             if prob >= random.random():
@@ -150,7 +163,7 @@ def simulation_data_generation(lr_model, X_original, price):
 
 #convert the csv format to the gz for vw
 def csv_to_gz():
-    df = pd.read_csv(VW_DS_DIR + str(price_arm) +'_' + str(price_range) + '.csv')
+    df = pd.read_csv(VW_DS_DIR + 'test/' + str(price_arm) +'_' + str(price_range) + '.csv')
     feature_column = list(df.columns)[2:]
     X_feature = df[feature_column]
     curr_arm = list(df['curr_arm'])
@@ -165,9 +178,25 @@ def csv_to_gz():
             f.write(str_output.encode())
             if curr_arm[i] == price_arm:
                 f.write("\n".encode())
-    
-    
-    
+
+#normalize the features into 0-1 intervals
+def norm_normalization(X_comb):
+    #the default norm across the complex feature dataframe
+    id_norm = {"max_id":0, "max_norm":0}
+    #find the maximum one in the feature
+    for i in range(len(X_comb)):
+        temp_vector = list(X_comb.loc[i])
+        temp_norm = math.sqrt(np.sum([temp_vect**2 for temp_vect in temp_vector]))
+        if id_norm["max_norm"] < temp_norm:
+            id_norm['max_id'] = i
+            id_norm['max_norm'] = temp_norm
+    #normalize with each row
+    for i in range(len(X_comb)):
+        temp_vector = np.array(list(X_comb.loc[i]))
+        temp_vector = pd.Series(list(temp_vector/id_norm['max_norm']))
+        temp_vector.index = feature_column + feature_column_interaction
+        X_comb.loc[i] = pd.Series(temp_vector)
+    return X_comb, id_norm
 if __name__ == '__main__':
 #    preprocessing()
 #    for i in range(4):
@@ -177,19 +206,24 @@ if __name__ == '__main__':
 #        save_vw_dataset(X, list(y), i + 1, VW_DS_DIR)
     
 #    feature_column = ['intercept', 'CarType', 'Primary_FICO', 'Term', 'rate', 'Competition_rate',
- #                     'onemonth',  'Amount_Approved']
-#    feature_column = ['intercept', 'CarType', 'Primary_FICO', 'Term', 'Competition_rate', 'onemonth']
-#    df = pd.read_csv(VW_DS_DIR + 'Original/Data.csv')[0:20]
-#    df['intercept'] = pd.Series(list(np.ones(len(df))))
-#    price = price_compute(list(df['mp']), list(df['rate']), list(df['Term']), list(df['Amount_Approved']))
-#    X_original, X_comb = feature_normalize(feature_column, price)
-#    Y = np.array([[np.array(df['apply'])[i]] for i in range(len(df['apply']))])
-#    lr_model = LogisticRegression(fit_intercept = False)
-#    lr_model.fit(X_comb, Y)
-#    #simulation_data_generation(lr_model, X_original, price)
+#                      'onemonth',  'Amount_Approved']
+    feature_column = ['intercept', 'CarType', 'Primary_FICO', 'Term', 'Competition_rate', 'onemonth']
+    feature_add = ['Type', 'partnerbin', 'rate']
+    feature_column_interaction = [feature + '_interact' for feature in feature_column]   
+    df = pd.read_csv(VW_DS_DIR + 'Original/Data.csv')[0:2000]
+    df['intercept'] = pd.Series(list(np.ones(len(df))))
+    price = price_compute(list(df['mp']), list(df['rate']), list(df['Term']), list(df['Amount_Approved']))
+    X_original, X_comb, feature_norm = feature_normalize(feature_column, price)
+    # normalize further for further use of feature columns
+    X_comb.columns = feature_column + feature_column_interaction
+    X_comb_revise, id_norm = norm_normalization(X_comb)
+    Y = np.array([[np.array(df['apply'])[i]] for i in range(len(df['apply']))])
+    lr_model = LogisticRegression(fit_intercept = False)
+    lr_model.fit(X_comb_revise, Y)
+    simulation_data_generation(lr_model, X_original, price, feature_norm, id_norm)
 #    print(lr_model.coef_)
-    simulation_data_generation(lr_model, X_original, price)
-    csv_to_gz()
+#    simulation_data_generation(lr_model, X_original, price)
+    #    csv_to_gz()
 
 #    for i in range(4):
 #        df = pd.read_csv(VW_DS_DIR + 'ds_loan' + str(i + 1) +'_2.csv')
